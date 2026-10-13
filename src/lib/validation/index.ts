@@ -97,7 +97,26 @@ export const feedbackInputSchema = z.object({
 });
 
 export const aiAnalyzeRequestSchema = z.object({
-  projectId: z.string().uuid('Valid project ID required'),
+  projectId: z.string().optional(),
+  project: z.object({
+    id: z.string().optional(),
+    title: z.string().min(1, 'Project title is required'),
+    description: z.string(),
+    detailed_description: z.string().optional().nullable(),
+    category: z.string(),
+    status: z.string(),
+  }),
+  feedbackItems: z.array(
+    z.object({
+      id: z.string().optional(),
+      title: z.string().min(1, 'Feedback title is required'),
+      comment: z.string().min(1, 'Feedback comment is required'),
+      reviewer_name: z.string().optional().nullable(),
+      category: feedbackCategorySchema.catch('Visual Design'),
+      priority: feedbackPrioritySchema.catch('Medium'),
+      status: feedbackStatusSchema.catch('To Do'),
+    })
+  ).min(1, 'At least one feedback item is required for AI synthesis'),
 });
 
 // AI Output schema validation

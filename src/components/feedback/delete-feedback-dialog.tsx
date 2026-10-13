@@ -5,7 +5,7 @@ import { FeedbackItem } from '@/types';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import { deleteFeedbackItem } from '@/lib/storage';
 
 export interface DeleteFeedbackDialogProps {
   isOpen: boolean;
@@ -25,30 +25,14 @@ export function DeleteFeedbackDialog({
 
   if (!item) return null;
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     setIsDeleting(true);
     setError(null);
 
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setError('Session expired. Please log in.');
-        setIsDeleting(false);
-        return;
-      }
-
-      const { error: deleteError } = await supabase
-        .from('feedback')
-        .delete()
-        .eq('id', item.id)
-        .eq('user_id', user.id);
-
-      if (deleteError) {
-        setError(deleteError.message);
+      const success = deleteFeedbackItem(item.id);
+      if (!success) {
+        setError('Feedback item could not be found in local storage.');
         setIsDeleting(false);
         return;
       }
@@ -73,7 +57,7 @@ export function DeleteFeedbackDialog({
     >
       <div className="space-y-4">
         <p className="text-xs text-stone-600 leading-relaxed">
-          Are you sure you want to delete <strong className="text-stone-900">&quot;{item.title}&quot;</strong>? This record will be permanently deleted from Supabase.
+          Are you sure you want to delete <strong className="text-stone-900">&quot;{item.title}&quot;</strong>? This record will be permanently deleted from local storage.
         </p>
 
         {error && <Alert variant="error">{error}</Alert>}

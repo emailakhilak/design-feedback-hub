@@ -8,7 +8,7 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import { createProject, updateProject, getDemoSession, DEFAULT_DEMO_USER } from '@/lib/storage';
 
 export interface ProjectModalProps {
   isOpen: boolean;
@@ -117,64 +117,40 @@ function ProjectModalForm({
 
     setIsSubmitting(true);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setServerError('Authentication session expired. Please sign in again.');
-        setIsSubmitting(false);
-        return;
-      }
+      const session = getDemoSession();
+      const userId = session?.user.id || DEFAULT_DEMO_USER.id;
 
       if (projectToEdit) {
-        const { data, error } = await supabase
-          .from('projects')
-          .update({
-            title: validationResult.data.title,
-            description: validationResult.data.description,
-            detailed_description: validationResult.data.detailed_description,
-            category: validationResult.data.category,
-            status: validationResult.data.status,
-            preview_image_url: validationResult.data.preview_image_url,
-            project_url: validationResult.data.project_url,
-          })
-          .eq('id', projectToEdit.id)
-          .eq('user_id', user.id)
-          .select()
-          .single();
+        const updated = updateProject(projectToEdit.id, {
+          title: validationResult.data.title,
+          description: validationResult.data.description,
+          detailed_description: validationResult.data.detailed_description,
+          category: validationResult.data.category,
+          status: validationResult.data.status,
+          preview_image_url: validationResult.data.preview_image_url,
+          project_url: validationResult.data.project_url,
+        });
 
-        if (error) {
-          setServerError(error.message);
+        if (!updated) {
+          setServerError('Failed to update project in local storage.');
           setIsSubmitting(false);
           return;
         }
 
-        onSuccess(data as Project);
+        onSuccess(updated);
       } else {
-        const { data, error } = await supabase
-          .from('projects')
-          .insert({
-            user_id: user.id,
-            title: validationResult.data.title,
-            description: validationResult.data.description,
-            detailed_description: validationResult.data.detailed_description,
-            category: validationResult.data.category,
-            status: validationResult.data.status,
-            preview_image_url: validationResult.data.preview_image_url,
-            project_url: validationResult.data.project_url,
-          })
-          .select()
-          .single();
+        const created = createProject({
+          user_id: userId,
+          title: validationResult.data.title,
+          description: validationResult.data.description,
+          detailed_description: validationResult.data.detailed_description,
+          category: validationResult.data.category,
+          status: validationResult.data.status,
+          preview_image_url: validationResult.data.preview_image_url,
+          project_url: validationResult.data.project_url,
+        });
 
-        if (error) {
-          setServerError(error.message);
-          setIsSubmitting(false);
-          return;
-        }
-
-        onSuccess(data as Project);
+        onSuccess(created);
       }
 
       onClose();

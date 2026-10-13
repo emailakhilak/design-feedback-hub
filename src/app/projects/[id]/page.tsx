@@ -1,12 +1,14 @@
-import { notFound, redirect } from 'next/navigation';
+'use client';
+
+import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/server';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PriorityBadge, StatusBadge } from '@/components/ui/badge';
 import { formatDate } from '@/lib/utils';
 import { Project, FeedbackItem } from '@/types';
+import { getProjectById, getFeedbackItems } from '@/lib/storage';
 import {
   ArrowLeft,
   KanbanSquare,
@@ -18,51 +20,47 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
-
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function ProjectDetailPage({ params }: PageProps) {
-  const { id } = await params;
-  const supabaseReady = isSupabaseConfigured();
+export default function ProjectDetailPage({ params }: PageProps) {
+  const resolvedParams = use(params);
+  const projectId = resolvedParams.id;
 
-  if (!supabaseReady) {
-    redirect('/projects');
+  const [project, setProject] = useState<Project | null>(() => {
+    if (typeof window !== 'undefined') return getProjectById(projectId);
+    return null;
+  });
+  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>(() => {
+    if (typeof window !== 'undefined') return getFeedbackItems(projectId);
+    return [];
+  });
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setProject(getProjectById(projectId));
+      setFeedbackList(getFeedbackItems(projectId));
+    };
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => window.removeEventListener('dfh_storage_change', handleStorageChange);
+  }, [projectId]);
+
+  if (!project) {
+    return (
+      <AppShell title="Project Not Found" description="The requested project was not found in local storage">
+        <div className="py-16 text-center space-y-4">
+          <p className="text-sm text-stone-500">Project could not be found or was deleted.</p>
+          <Link href="/projects">
+            <Button size="sm">
+              <ArrowLeft className="w-4 h-4 mr-1.5" />
+              <span>Back to Projects</span>
+            </Button>
+          </Link>
+        </div>
+      </AppShell>
+    );
   }
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect(`/login?redirectTo=/projects/${id}`);
-  }
-
-  // Fetch project
-  const { data: projectData, error: projectError } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
-
-  if (projectError || !projectData) {
-    notFound();
-  }
-
-  const project = projectData as Project;
-
-  // Fetch feedback for this project
-  const { data: feedbackData } = await supabase
-    .from('feedback')
-    .select('*')
-    .eq('project_id', id)
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
-
-  const feedbackList = (feedbackData || []) as FeedbackItem[];
 
   const todoCount = feedbackList.filter((f) => f.status === 'To Do').length;
   const inProgressCount = feedbackList.filter((f) => f.status === 'In Progress').length;
@@ -74,8 +72,6 @@ export default async function ProjectDetailPage({ params }: PageProps) {
     <AppShell
       title={project.title}
       description={`Portfolio Project Details • ${project.category}`}
-      userEmail={user.email}
-      displayName={user.email?.split('@')[0]}
     >
       <div className="space-y-6 pb-12 max-w-5xl mx-auto">
         {/* Navigation & Actions */}

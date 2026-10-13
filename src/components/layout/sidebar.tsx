@@ -15,7 +15,7 @@ import {
   Layers,
   X,
 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { signOutDemo } from '@/lib/storage';
 import { useRouter } from 'next/navigation';
 
 export interface SidebarProps {
@@ -38,12 +38,10 @@ export function Sidebar({ isOpen, onClose, userEmail, displayName }: SidebarProp
     { label: 'Settings', href: '/settings', icon: Settings },
   ];
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
+      signOutDemo();
       router.push('/login');
-      router.refresh();
     } catch (e) {
       console.error('Logout error:', e);
       router.push('/login');

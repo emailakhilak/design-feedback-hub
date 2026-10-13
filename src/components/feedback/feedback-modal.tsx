@@ -14,7 +14,7 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import { createFeedbackItem, updateFeedbackItem, getDemoSession, DEFAULT_DEMO_USER } from '@/lib/storage';
 
 export interface FeedbackModalProps {
   isOpen: boolean;
@@ -159,71 +159,46 @@ function FeedbackModalForm({
 
     setIsSubmitting(true);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setServerError('Session expired. Please sign in.');
-        setIsSubmitting(false);
-        return;
-      }
-
+      const session = getDemoSession();
+      const userId = session?.user.id || DEFAULT_DEMO_USER.id;
       const matchingProj = projects.find((p) => p.id === projectId);
 
       if (feedbackToEdit) {
-        const { data, error } = await supabase
-          .from('feedback')
-          .update({
-            project_id: validationResult.data.project_id,
-            title: validationResult.data.title,
-            comment: validationResult.data.comment,
-            reviewer_name: validationResult.data.reviewer_name,
-            category: validationResult.data.category,
-            priority: validationResult.data.priority,
-            status: validationResult.data.status,
-          })
-          .eq('id', feedbackToEdit.id)
-          .eq('user_id', user.id)
-          .select()
-          .single();
+        const updated = updateFeedbackItem(feedbackToEdit.id, {
+          project_id: validationResult.data.project_id,
+          title: validationResult.data.title,
+          comment: validationResult.data.comment,
+          reviewer_name: validationResult.data.reviewer_name,
+          category: validationResult.data.category,
+          priority: validationResult.data.priority,
+          status: validationResult.data.status,
+        });
 
-        if (error) {
-          setServerError(error.message);
+        if (!updated) {
+          setServerError('Failed to update feedback in local storage.');
           setIsSubmitting(false);
           return;
         }
 
         const savedWithProject = {
-          ...(data as FeedbackItem),
+          ...updated,
           project: matchingProj ? { id: matchingProj.id, title: matchingProj.title } : null,
         };
         onSuccess(savedWithProject);
       } else {
-        const { data, error } = await supabase
-          .from('feedback')
-          .insert({
-            user_id: user.id,
-            project_id: validationResult.data.project_id,
-            title: validationResult.data.title,
-            comment: validationResult.data.comment,
-            reviewer_name: validationResult.data.reviewer_name,
-            category: validationResult.data.category,
-            priority: validationResult.data.priority,
-            status: validationResult.data.status,
-          })
-          .select()
-          .single();
-
-        if (error) {
-          setServerError(error.message);
-          setIsSubmitting(false);
-          return;
-        }
+        const created = createFeedbackItem({
+          user_id: userId,
+          project_id: validationResult.data.project_id,
+          title: validationResult.data.title,
+          comment: validationResult.data.comment,
+          reviewer_name: validationResult.data.reviewer_name,
+          category: validationResult.data.category,
+          priority: validationResult.data.priority,
+          status: validationResult.data.status,
+        });
 
         const savedWithProject = {
-          ...(data as FeedbackItem),
+          ...created,
           project: matchingProj ? { id: matchingProj.id, title: matchingProj.title } : null,
         };
         onSuccess(savedWithProject);

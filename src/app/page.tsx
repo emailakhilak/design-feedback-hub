@@ -1,6 +1,4 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import {
   Layers,
@@ -8,20 +6,11 @@ import {
   KanbanSquare,
   BarChart3,
   ArrowRight,
+  HardDrive,
   ShieldCheck,
-  CheckCircle2,
 } from 'lucide-react';
 
-export default async function HomePage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    redirect('/dashboard');
-  }
-
+export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#FBFBFA] flex flex-col text-stone-900 selection:bg-indigo-100">
       {/* Navigation Header */}
@@ -42,9 +31,9 @@ export default async function HomePage() {
                 Sign In
               </Button>
             </Link>
-            <Link href="/signup">
+            <Link href="/dashboard">
               <Button size="sm">
-                <span>Get Started</span>
+                <span>Open Dashboard</span>
                 <ArrowRight className="w-3.5 h-3.5 ml-1" />
               </Button>
             </Link>
@@ -72,15 +61,15 @@ export default async function HomePage() {
         </p>
 
         <div className="flex flex-col sm:flex-row items-center gap-3.5 w-full justify-center mb-16">
-          <Link href="/signup" className="w-full sm:w-auto">
+          <Link href="/dashboard" className="w-full sm:w-auto">
             <Button size="lg" className="w-full sm:w-auto px-8 shadow-sm">
-              <span>Start Free with Supabase</span>
+              <span>Explore Demo Workspace</span>
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </Link>
           <Link href="/login" className="w-full sm:w-auto">
             <Button variant="outline" size="lg" className="w-full sm:w-auto px-8">
-              Open Dashboard
+              Sign In (Demo Mode)
             </Button>
           </Link>
         </div>
@@ -126,12 +115,12 @@ export default async function HomePage() {
 
         <div className="mt-16 pt-8 border-t border-stone-200/60 w-full flex flex-wrap items-center justify-center gap-8 text-xs text-stone-500">
           <span className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            PostgreSQL Persistence
+            <HardDrive className="w-4 h-4 text-emerald-600" />
+            Browser Local Storage Persistence
           </span>
           <span className="flex items-center gap-1.5">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            Row Level Security Isolation
+            Privacy-First Demo Architecture
           </span>
           <span className="flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-indigo-600" />

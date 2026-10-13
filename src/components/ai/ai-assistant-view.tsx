@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Project, AiAnalysisResult, AiReportRecord } from '@/types';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -8,7 +8,15 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { PriorityBadge } from '@/components/ui/badge';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import {
+  getProjects,
+  getFeedbackItems,
+  getAiReports,
+  saveAiReport,
+  createFeedbackItem,
+  getDemoSession,
+  DEFAULT_DEMO_USER,
+} from '@/lib/storage';
 import { formatDate } from '@/lib/utils';
 import {
   Sparkles,
@@ -16,9 +24,7 @@ import {
   Copy,
   Check,
   CheckCircle2,
-  AlertTriangle,
   Flame,
-  ArrowRight,
   ShieldCheck,
   Layers,
   ListTodo,
@@ -27,21 +33,34 @@ import {
 } from 'lucide-react';
 
 export interface AiAssistantViewProps {
-  projects: Project[];
+  projects?: Project[];
   initialProjectId?: string;
-  recentReports: AiReportRecord[];
-  geminiConfigured: boolean;
+  recentReports?: AiReportRecord[];
+  geminiConfigured?: boolean;
 }
 
 export function AiAssistantView({
-  projects,
+  projects: propProjects,
   initialProjectId,
-  recentReports,
-  geminiConfigured,
+  recentReports: propReports,
+  geminiConfigured = true,
 }: AiAssistantViewProps) {
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(
-    initialProjectId || projects[0]?.id || ''
-  );
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window !== 'undefined') return getProjects();
+    return propProjects || [];
+  });
+  const [recentReports, setRecentReports] = useState<AiReportRecord[]>(() => {
+    if (typeof window !== 'undefined') return getAiReports();
+    return propReports || [];
+  });
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
+    if (initialProjectId) return initialProjectId;
+    if (typeof window !== 'undefined') {
+      const projs = getProjects();
+      return projs[0]?.id || '';
+    }
+    return propProjects?.[0]?.id || '';
+  });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AiAnalysisResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -51,6 +70,22 @@ export function AiAssistantView({
   const [selectedTaskIds, setSelectedTaskIds] = useState<Record<string, boolean>>({});
   const [isSavingTasks, setIsSavingTasks] = useState(false);
   const [tasksSavedSuccess, setTasksSavedSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const loadedProjects = getProjects();
+      const loadedReports = getAiReports();
+      setProjects(loadedProjects);
+      setRecentReports(loadedReports);
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dfh_storage_change', handleStorageChange);
+    };
+  }, []);
 
   const activeProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -65,6 +100,20 @@ export function AiAssistantView({
       return;
     }
 
+    const currentProject = projects.find((p) => p.id === selectedProjectId);
+    if (!currentProject) {
+      setErrorMessage('Project not found in storage.');
+      return;
+    }
+
+    const feedbackItems = getFeedbackItems(selectedProjectId);
+    if (feedbackItems.length === 0) {
+      setErrorMessage(
+        'This project has no feedback items yet. Add reviewer feedback on the Feedback Board before running Gemini AI analysis.'
+      );
+      return;
+    }
+
     setIsAnalyzing(true);
     setErrorMessage(null);
     setAnalysisResult(null);
@@ -75,7 +124,10 @@ export function AiAssistantView({
       const response = await fetch('/api/ai/analyze-feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: selectedProjectId }),
+        body: JSON.stringify({
+          project: currentProject,
+          feedbackItems,
+        }),
       });
 
       const data = await response.json();
@@ -84,11 +136,24 @@ export function AiAssistantView({
         throw new Error(data.error || 'Failed to complete AI analysis.');
       }
 
-      setAnalysisResult(data.result as AiAnalysisResult);
+      const result = data.result as AiAnalysisResult;
+      setAnalysisResult(result);
+
+      // Persist AI Report to Local Storage
+      const session = getDemoSession();
+      const userId = session?.user.id || DEFAULT_DEMO_USER.id;
+      const saved = saveAiReport({
+        project_id: selectedProjectId,
+        user_id: userId,
+        report_type: 'feedback_analysis',
+        structured_result: result,
+      });
+
+      setRecentReports((prev) => [saved, ...prev]);
 
       // Pre-select all actionable tasks by default so user can review & uncheck
       const initialSelected: Record<string, boolean> = {};
-      (data.result as AiAnalysisResult).actionable_tasks?.forEach((t) => {
+      result.actionable_tasks?.forEach((t) => {
         initialSelected[t.id] = true;
       });
       setSelectedTaskIds(initialSelected);
@@ -129,32 +194,22 @@ export function AiAssistantView({
     setErrorMessage(null);
 
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const session = getDemoSession();
+      const userId = session?.user.id || DEFAULT_DEMO_USER.id;
 
-      if (!user) {
-        throw new Error('Authentication expired. Please log in.');
-      }
-
-      // Batch insert selected actionable tasks into the feedback table
-      const rowsToInsert = tasksToSave.map((task) => ({
-        user_id: user.id,
-        project_id: selectedProjectId,
-        title: task.title,
-        comment: `[AI Generated Task from Feedback Analysis]\n${task.comment}`,
-        reviewer_name: 'Gemini AI Assistant',
-        category: task.category,
-        priority: task.priority,
-        status: task.suggested_status || 'To Do',
-      }));
-
-      const { error } = await supabase.from('feedback').insert(rowsToInsert);
-
-      if (error) {
-        throw error;
-      }
+      // Insert selected actionable tasks into Local Storage
+      tasksToSave.forEach((task) => {
+        createFeedbackItem({
+          user_id: userId,
+          project_id: selectedProjectId,
+          title: task.title,
+          comment: `[AI Generated Task from Feedback Analysis]\n${task.comment}`,
+          reviewer_name: 'Gemini AI Assistant',
+          category: task.category,
+          priority: task.priority,
+          status: task.suggested_status || 'To Do',
+        });
+      });
 
       setTasksSavedSuccess(
         `Successfully saved ${tasksToSave.length} tasks directly to your Feedback Board!`
@@ -252,88 +307,89 @@ export function AiAssistantView({
         )}
       </Card>
 
-      {/* Error Banner */}
+      {/* Error alert */}
       {errorMessage && (
         <Alert variant="error" title="Analysis Error">
           {errorMessage}
         </Alert>
       )}
 
-      {/* Success Banner for Saved Tasks */}
+      {/* Task Saved alert */}
       {tasksSavedSuccess && (
-        <Alert variant="success" title="Tasks Created on Feedback Board">
+        <Alert variant="success" title="Feedback Board Updated">
           {tasksSavedSuccess}{' '}
-          <Link
-            href={`/feedback?project=${selectedProjectId}`}
-            className="underline font-semibold ml-1"
-          >
-            Open Feedback Board
+          <Link href={`/feedback?project=${selectedProjectId}`} className="font-semibold underline ml-1">
+            Open Feedback Board &rarr;
           </Link>
         </Alert>
       )}
 
-      {/* Analysis Output Container */}
-      {analysisResult && (
-        <div className="space-y-8 animate-fade-in">
-          {/* AI Disclaimer Notice */}
-          <div className="flex items-center justify-between p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-xl text-xs text-indigo-950">
-            <div className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-indigo-600" />
-              <span>
-                <strong>Gemini AI Synthesis:</strong> Recommendations and tasks are synthesized from actual reviewer notes. Review before applying.
-              </span>
-            </div>
-            <button
-              onClick={() =>
-                handleCopy(JSON.stringify(analysisResult, null, 2), 'full_json')
-              }
-              className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 text-[11px] font-semibold cursor-pointer"
-            >
-              {copiedSection === 'full_json' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              <span>Copy Full Report</span>
-            </button>
+      {/* Loading State Skeleton */}
+      {isAnalyzing && (
+        <Card className="p-8 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto text-indigo-600 animate-bounce">
+            <Bot className="w-6 h-6" />
           </div>
+          <div>
+            <h3 className="text-sm font-semibold text-stone-900">
+              Gemini AI is analyzing reviewer critique...
+            </h3>
+            <p className="text-xs text-stone-500 mt-1 max-w-md mx-auto">
+              Synthesizing recurring usability issues, prioritizing design iterations, and generating concrete implementation tasks.
+            </p>
+          </div>
+          <div className="w-48 h-1.5 bg-stone-100 rounded-full mx-auto overflow-hidden">
+            <div className="h-full bg-indigo-600 rounded-full animate-pulse w-3/4" />
+          </div>
+        </Card>
+      )}
 
-          {/* SECTION A: Summary & Recurring Issues */}
+      {/* Render Analysis Results */}
+      {analysisResult && !isAnalyzing && (
+        <div className="space-y-8 animate-fade-in">
+          {/* Section 1: Executive Summary */}
           <Card className="p-6">
             <CardHeader className="flex flex-row items-center justify-between pb-3">
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-indigo-600" />
-                  <span>Executive Feedback Summary & Recurring Issues</span>
+                  <Sparkles className="w-4 h-4 text-indigo-600" />
+                  <span>Executive Feedback Synthesis</span>
                 </CardTitle>
                 <CardDescription>
-                  Synthesized overview of common reviewer sentiments and recurring pain points.
+                  High-level breakdown of reviewer observations and recurring sentiments.
                 </CardDescription>
               </div>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() =>
                   handleCopy(
-                    `${analysisResult.summary.overall_summary}\n\nRecurring Issues:\n${analysisResult.summary.recurring_issues.join('\n')}`,
-                    'summary'
+                    analysisResult.summary.overall_summary,
+                    'executive_summary'
                   )
                 }
-                className="text-stone-400 hover:text-stone-700 p-1.5 rounded"
-                title="Copy Summary"
               >
-                {copiedSection === 'summary' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
+                {copiedSection === 'executive_summary' ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                <span>Copy Summary</span>
+              </Button>
             </CardHeader>
-
-            <CardContent className="space-y-5 pt-2">
-              {/* Overall Summary Paragraph */}
-              <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 text-xs sm:text-sm text-stone-700 leading-relaxed font-normal">
-                {analysisResult.summary.overall_summary}
+            <CardContent className="space-y-4 pt-2">
+              <div className="p-4 bg-stone-50/80 rounded-xl border border-stone-200/60 text-xs sm:text-sm text-stone-800 leading-relaxed font-serif">
+                &ldquo;{analysisResult.summary.overall_summary}&rdquo;
               </div>
 
-              {/* Recurring Issues & Positive Observations */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl border border-rose-100 bg-rose-50/40 space-y-2">
-                  <h4 className="text-xs font-bold text-rose-900 uppercase tracking-wide flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                    Recurring Design Bottlenecks
-                  </h4>
-                  <ul className="text-xs text-stone-700 space-y-1.5 list-disc list-inside">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                {/* Recurring Issues */}
+                <div className="p-4 rounded-xl bg-amber-50/50 border border-amber-200/60 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-900">
+                    <Flame className="w-4 h-4 text-amber-600" />
+                    <span>Recurring Design Issues</span>
+                  </div>
+                  <ul className="text-xs text-amber-800 space-y-1.5 list-disc list-inside">
                     {analysisResult.summary.recurring_issues.map((issue, idx) => (
                       <li key={idx} className="leading-relaxed">
                         {issue}
@@ -342,12 +398,13 @@ export function AiAssistantView({
                   </ul>
                 </div>
 
-                <div className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/40 space-y-2">
-                  <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-wide flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    Verified Positive Observations
-                  </h4>
-                  <ul className="text-xs text-stone-700 space-y-1.5 list-disc list-inside">
+                {/* Positive Observations */}
+                <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-200/60 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-900">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Validated Strengths</span>
+                  </div>
+                  <ul className="text-xs text-emerald-800 space-y-1.5 list-disc list-inside">
                     {analysisResult.summary.positive_observations.map((pos, idx) => (
                       <li key={idx} className="leading-relaxed">
                         {pos}
@@ -357,84 +414,145 @@ export function AiAssistantView({
                 </div>
               </div>
 
-              {/* Usability & Accessibility concerns */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {analysisResult.summary.usability_concerns.length > 0 && (
-                  <div className="p-3.5 rounded-xl border border-stone-200 bg-white space-y-1.5">
-                    <h5 className="text-[11px] font-bold text-stone-900 uppercase tracking-wider">
-                      Usability Concerns
-                    </h5>
-                    <ul className="text-xs text-stone-600 space-y-1 list-disc list-inside">
-                      {analysisResult.summary.usability_concerns.map((u, i) => (
-                        <li key={i}>{u}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+              {/* Usability & Accessibility Highlights */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 text-xs">
+                <div className="p-3 bg-stone-50 rounded-lg border border-stone-100 space-y-1">
+                  <span className="font-semibold text-stone-900 block">
+                    Usability & Flow Concerns:
+                  </span>
+                  <ul className="text-stone-600 space-y-1 list-disc list-inside">
+                    {analysisResult.summary.usability_concerns.map((u, idx) => (
+                      <li key={idx}>{u}</li>
+                    ))}
+                  </ul>
+                </div>
 
-                {analysisResult.summary.accessibility_concerns.length > 0 && (
-                  <div className="p-3.5 rounded-xl border border-stone-200 bg-white space-y-1.5">
-                    <h5 className="text-[11px] font-bold text-stone-900 uppercase tracking-wider">
-                      Accessibility & Contrast Concerns
-                    </h5>
-                    <ul className="text-xs text-stone-600 space-y-1 list-disc list-inside">
-                      {analysisResult.summary.accessibility_concerns.map((a, i) => (
-                        <li key={i}>{a}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                <div className="p-3 bg-stone-50 rounded-lg border border-stone-100 space-y-1">
+                  <span className="font-semibold text-stone-900 block">
+                    Accessibility & Contrast Notes:
+                  </span>
+                  <ul className="text-stone-600 space-y-1 list-disc list-inside">
+                    {analysisResult.summary.accessibility_concerns.map((a, idx) => (
+                      <li key={idx}>{a}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* SECTION B: Smart Recommendations */}
+          {/* Section 2: Smart Recommendations */}
           <Card className="p-6">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-purple-600" />
-                <span>Smart Architectural Recommendations</span>
+                <Bot className="w-4 h-4 text-indigo-600" />
+                <span>Strategic Design Recommendations ({analysisResult.recommendations.length})</span>
               </CardTitle>
               <CardDescription>
-                High-leverage design interventions with concrete steps and expected benefits.
+                Prioritized, high-impact refinements synthesized directly from review patterns.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4 pt-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {analysisResult.recommendations.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="p-4 rounded-xl border border-stone-200 bg-white space-y-3 flex flex-col justify-between"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
+            <CardContent className="pt-2 divide-y divide-stone-100">
+              {analysisResult.recommendations.map((rec, idx) => (
+                <div key={rec.id || idx} className="py-4 space-y-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <PriorityBadge priority={rec.suggested_priority} />
-                        <span className="text-[10px] text-stone-500 font-medium px-2 py-0.5 bg-stone-100 rounded">
+                        <span className="text-xs font-semibold text-stone-400">
                           Effort: {rec.estimated_effort}
                         </span>
+                        <span className="text-xs font-semibold text-indigo-600">
+                          Confidence: {rec.confidence}
+                        </span>
                       </div>
-                      <h4 className="text-xs sm:text-sm font-bold text-stone-900">
+                      <h4 className="text-sm font-bold text-stone-900 pt-0.5">
                         {rec.title}
                       </h4>
-                      <p className="text-xs text-stone-600 leading-relaxed">
-                        {rec.explanation}
-                      </p>
-
-                      {/* Concrete steps */}
-                      <div className="pt-2">
-                        <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider block mb-1">
-                          Implementation Steps:
-                        </span>
-                        <ul className="text-[11px] text-stone-600 space-y-1 list-decimal list-inside pl-1">
-                          {rec.concrete_steps.map((step, sIdx) => (
-                            <li key={sIdx}>{step}</li>
-                          ))}
-                        </ul>
-                      </div>
                     </div>
+                  </div>
 
-                    <div className="pt-3 border-t border-stone-100 text-[11px] text-indigo-700 bg-indigo-50/50 p-2 rounded-lg">
+                  <p className="text-xs text-stone-600 leading-relaxed">
+                    {rec.explanation}
+                  </p>
+
+                  {/* Concrete Steps */}
+                  <div className="p-3 bg-stone-50/80 rounded-lg border border-stone-100 space-y-1.5 text-xs">
+                    <span className="font-semibold text-stone-800 block text-[11px] uppercase tracking-wider">
+                      Recommended Steps:
+                    </span>
+                    <ol className="list-decimal list-inside space-y-1 text-stone-700">
+                      {rec.concrete_steps.map((step, sIdx) => (
+                        <li key={sIdx}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-stone-500 pt-1">
+                    <span>
                       <strong>Expected Benefit:</strong> {rec.expected_benefit}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Section 3: Actionable Tasks to Feed Board */}
+          <Card className="p-6">
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ListTodo className="w-4 h-4 text-emerald-600" />
+                  <span>Actionable Tasks for Feedback Board</span>
+                </CardTitle>
+                <CardDescription>
+                  Select generated tasks to automatically push to your Feedback Board.
+                </CardDescription>
+              </div>
+
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={handleSaveSelectedTasks}
+                isLoading={isSavingTasks}
+                disabled={isSavingTasks}
+                className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                <KanbanSquare className="w-3.5 h-3.5 mr-1.5" />
+                <span>Push Selected to Feedback Board</span>
+              </Button>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <div className="divide-y divide-stone-100">
+                {analysisResult.actionable_tasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className="py-3 flex items-start gap-3.5 hover:bg-stone-50/50 p-2 rounded-lg transition-colors cursor-pointer"
+                    onClick={() => toggleTaskSelection(task.id)}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(selectedTaskIds[task.id])}
+                      onChange={() => toggleTaskSelection(task.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-1 h-4 w-4 rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-stone-900">
+                          {task.title}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <PriorityBadge priority={task.priority} />
+                          <span className="text-[10px] text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded">
+                            {task.category}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-stone-600 leading-relaxed">
+                        {task.comment}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -442,114 +560,48 @@ export function AiAssistantView({
             </CardContent>
           </Card>
 
-          {/* SECTION C: Actionable Tasks (Convert & Selectively Save) */}
-          <Card className="p-6 border-indigo-200/80 bg-gradient-to-b from-indigo-50/20 to-white">
-            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3">
-              <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <ListTodo className="w-4 h-4 text-indigo-600" />
-                  <span>Convert Feedback into Actionable Tasks</span>
-                </CardTitle>
-                <CardDescription>
-                  Review the tasks below, select which ones you want to tackle, and save them directly to your Feedback Board.
-                </CardDescription>
-              </div>
-
-              <Button
-                size="sm"
-                onClick={handleSaveSelectedTasks}
-                isLoading={isSavingTasks}
-                disabled={isSavingTasks}
-                className="shrink-0"
-              >
-                <span>Save Selected to Feedback Board</span>
-                <ArrowRight className="w-3.5 h-3.5 ml-1" />
-              </Button>
-            </CardHeader>
-
-            <CardContent className="space-y-3 pt-2">
-              <div className="space-y-2">
-                {analysisResult.actionable_tasks.map((task) => {
-                  const isChecked = Boolean(selectedTaskIds[task.id]);
-
-                  return (
-                    <div
-                      key={task.id}
-                      onClick={() => toggleTaskSelection(task.id)}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-start gap-3 select-none ${
-                        isChecked
-                          ? 'bg-indigo-50/40 border-indigo-200 shadow-2xs'
-                          : 'bg-white border-stone-200 hover:border-stone-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleTaskSelection(task.id)}
-                        className="mt-1 h-4 w-4 rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-xs font-bold text-stone-900">
-                            {task.title}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded font-medium">
-                              {task.category}
-                            </span>
-                            <PriorityBadge priority={task.priority} />
-                          </div>
-                        </div>
-                        <p className="text-xs text-stone-600 leading-relaxed">
-                          {task.comment}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* SECTION D: Project Review & Order of Work */}
+          {/* Section 4: Comprehensive Project Review & Roadmap */}
           <Card className="p-6">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <Layers className="w-4 h-4 text-stone-700" />
-                <span>Overall Project Review & Sequenced Order of Work</span>
+                <Layers className="w-4 h-4 text-purple-600" />
+                <span>Showcase Readiness Roadmap</span>
               </CardTitle>
               <CardDescription>
-                Strategic review and recommended order of improvements to prepare for portfolio review.
+                Strategic order of operations to elevate this portfolio piece to showcase quality.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5 pt-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wide">
-                    Suggested Order of Work
-                  </h4>
-                  <div className="space-y-2">
-                    {analysisResult.project_review.order_of_work.map((step, idx) => (
-                      <div
-                        key={idx}
-                        className="p-2.5 rounded-lg border border-stone-100 bg-stone-50/70 text-xs flex items-start gap-2.5"
-                      >
-                        <span className="w-5 h-5 rounded-full bg-stone-900 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
-                          {idx + 1}
-                        </span>
-                        <span className="text-stone-700">{step}</span>
-                      </div>
+            <CardContent className="space-y-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 space-y-2">
+                  <span className="font-semibold text-stone-900 uppercase tracking-wider text-[11px] block">
+                    Strategic Design Shifts:
+                  </span>
+                  <ul className="space-y-1.5 list-disc list-inside text-stone-700">
+                    {analysisResult.project_review.actionable_recommendations.map((ar, idx) => (
+                      <li key={idx} className="leading-relaxed">{ar}</li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
 
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wide">
-                    Next-Steps Showcase Roadmap
-                  </h4>
-                  <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-700 leading-relaxed whitespace-pre-line">
-                    {analysisResult.project_review.next_steps_plan}
-                  </div>
+                <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 space-y-2">
+                  <span className="font-semibold text-stone-900 uppercase tracking-wider text-[11px] block">
+                    Recommended Order of Work:
+                  </span>
+                  <ol className="space-y-1.5 list-decimal list-inside text-stone-700">
+                    {analysisResult.project_review.order_of_work.map((ow, idx) => (
+                      <li key={idx} className="leading-relaxed">{ow}</li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <span className="text-xs font-semibold text-stone-800 block mb-1.5">
+                  Portfolio Showcase Roadmap:
+                </span>
+                <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-700 leading-relaxed whitespace-pre-line">
+                  {analysisResult.project_review.next_steps_plan}
                 </div>
               </div>
             </CardContent>
@@ -566,7 +618,7 @@ export function AiAssistantView({
               <span>Historical Saved AI Reports</span>
             </CardTitle>
             <CardDescription>
-              Previously generated Gemini analyses stored in Supabase.
+              Previously generated Gemini analyses stored in local storage.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-2 divide-y divide-stone-100">

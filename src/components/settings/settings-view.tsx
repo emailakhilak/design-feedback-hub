@@ -1,46 +1,96 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import {
+  getProfile,
+  updateProfile,
+  getDemoSession,
+  signOutDemo,
+  resetStorageToDemo,
+  isLocalStorageAvailable,
+  DEFAULT_DEMO_USER,
+} from '@/lib/storage';
 import {
   User,
   ShieldCheck,
   Sparkles,
-  Database,
+  HardDrive,
   CheckCircle2,
   AlertTriangle,
   LogOut,
   Save,
+  RotateCcw,
+  Info,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 export interface SettingsViewProps {
-  userId: string;
-  userEmail: string;
-  initialDisplayName: string;
-  supabaseConfigured: boolean;
-  geminiConfigured: boolean;
-  userCreatedAt?: string;
+  userId?: string;
+  userEmail?: string;
+  initialDisplayName?: string;
+  geminiConfigured?: boolean;
 }
 
 export function SettingsView({
-  userId,
-  userEmail,
+  userId: propUserId,
+  userEmail: propUserEmail,
   initialDisplayName,
-  supabaseConfigured,
-  geminiConfigured,
-  userCreatedAt,
+  geminiConfigured = true,
 }: SettingsViewProps) {
   const router = useRouter();
-  const [displayName, setDisplayName] = useState(initialDisplayName);
+  const [displayName, setDisplayName] = useState(() => {
+    if (initialDisplayName) return initialDisplayName;
+    if (typeof window !== 'undefined') return getProfile().display_name || 'Alex Rivera';
+    return 'Alex Rivera';
+  });
+  const [userEmail, setUserEmail] = useState(() => {
+    if (propUserEmail) return propUserEmail;
+    if (typeof window !== 'undefined') {
+      const session = getDemoSession();
+      if (session) return session.user.email;
+    }
+    return DEFAULT_DEMO_USER.email;
+  });
+  const [userId, setUserId] = useState(() => {
+    if (propUserId) return propUserId;
+    if (typeof window !== 'undefined') {
+      const session = getDemoSession();
+      if (session) return session.user.id;
+    }
+    return DEFAULT_DEMO_USER.id;
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [localStorageReady, setLocalStorageReady] = useState(() => {
+    if (typeof window !== 'undefined') return isLocalStorageAvailable();
+    return true;
+  });
 
-  const handleUpdateProfile = async (e: React.FormEvent) => {
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setLocalStorageReady(isLocalStorageAvailable());
+      const profile = getProfile();
+      const session = getDemoSession();
+      if (profile.display_name) setDisplayName(profile.display_name);
+      if (session) {
+        setUserEmail(session.user.email);
+        setUserId(session.user.id);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dfh_storage_change', handleStorageChange);
+    };
+  }, []);
+
+  const handleUpdateProfile = (e: React.FormEvent) => {
     e.preventDefault();
     setStatusMessage(null);
 
@@ -51,49 +101,35 @@ export function SettingsView({
 
     setIsSaving(true);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        throw new Error('Session expired. Please sign in again.');
-      }
-
-      // Update public.profiles
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          display_name: displayName.trim(),
-          updated_at: new Date().toISOString(),
-        });
-
-      if (profileError) {
-        throw profileError;
-      }
-
-      // Update user auth metadata
-      await supabase.auth.updateUser({
-        data: { display_name: displayName.trim() },
+      updateProfile({
+        display_name: displayName.trim(),
       });
 
-      setStatusMessage({ type: 'success', text: 'Profile display name updated successfully!' });
-      router.refresh();
+      setStatusMessage({ type: 'success', text: 'Profile display name updated successfully in Local Storage!' });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to update profile.';
+      const msg = err instanceof Error ? err.message : 'Failed to update profile in storage.';
       setStatusMessage({ type: 'error', text: msg });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleLogout = async () => {
+  const handleResetData = () => {
+    if (window.confirm('Reset all portfolio projects, feedback items, and reports to default demo data?')) {
+      resetStorageToDemo();
+      const profile = getProfile();
+      setDisplayName(profile.display_name);
+      setStatusMessage({ type: 'success', text: 'Storage successfully reset to default demo dataset.' });
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    }
+  };
+
+  const handleLogout = () => {
     try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
+      signOutDemo();
       router.push('/login');
-      router.refresh();
     } catch {
       router.push('/login');
     }
@@ -104,10 +140,10 @@ export function SettingsView({
       {/* Settings Intro */}
       <div className="bg-white border border-stone-200/90 rounded-2xl p-6 sm:p-8 shadow-xs">
         <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
-          Account & Environment Settings
+          Account & Storage Settings
         </h2>
         <p className="text-xs sm:text-sm text-stone-500 mt-1 leading-relaxed">
-          Manage your personal designer identity and verify your Supabase database and Google Gemini AI connections.
+          Manage your personal designer identity, check browser storage status, and verify your Google Gemini AI connection.
         </p>
       </div>
 
@@ -142,21 +178,16 @@ export function SettingsView({
               label="Email Address"
               disabled
               value={userEmail}
-              helperText="Email changes require verification via Supabase Auth."
+              helperText="Demo user email stored in browser session."
             />
 
             <div className="text-[11px] text-stone-400 bg-stone-50 p-2.5 rounded-lg border border-stone-100 space-y-1">
               <div>
                 User ID: <span className="font-mono text-stone-600">{userId}</span>
               </div>
-              {userCreatedAt && (
-                <div>
-                  Member Since: <span className="text-stone-600">{new Date(userCreatedAt).toLocaleDateString()}</span>
-                </div>
-              )}
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 flex items-center gap-3">
               <Button type="submit" size="sm" isLoading={isSaving} disabled={isSaving}>
                 <Save className="w-3.5 h-3.5 mr-1.5" />
                 <span>Save Profile Changes</span>
@@ -166,42 +197,42 @@ export function SettingsView({
         </CardContent>
       </Card>
 
-      {/* Integration & Security Checklist */}
+      {/* Integration & Storage Checklist */}
       <Card className="p-6">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>System Integrations & Security Checklist</span>
+            <span>Storage & Service Checklist</span>
           </CardTitle>
           <CardDescription>
-            Live verification of database connectivity, row-level security, and AI models.
+            Live verification of browser persistence and server-side Google Gemini AI.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 pt-2">
-          {/* Supabase status */}
+          {/* Local Storage status */}
           <div className="p-4 rounded-xl border border-stone-200 bg-white flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-emerald-50 text-emerald-700">
-                <Database className="w-4 h-4" />
+                <HardDrive className="w-4 h-4" />
               </div>
               <div>
                 <h4 className="text-xs font-bold text-stone-900">
-                  Supabase PostgreSQL & Auth
+                  Browser Local Storage
                 </h4>
                 <p className="text-[11px] text-stone-500">
-                  Persistent projects, reviewer comments, and AI report storage.
+                  Projects, Kanban feedback items, and AI reports persist across page refreshes.
                 </p>
               </div>
             </div>
-            {supabaseConfigured ? (
+            {localStorageReady ? (
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Connected</span>
+                <span>Active & Persisting</span>
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                <span>Action Needed</span>
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-full">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                <span>Storage Disabled</span>
               </span>
             )}
           </div>
@@ -234,25 +265,21 @@ export function SettingsView({
             )}
           </div>
 
-          {/* Row Level Security */}
-          <div className="p-4 rounded-xl border border-stone-200 bg-white flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-stone-100 text-stone-700">
-                <ShieldCheck className="w-4 h-4" />
-              </div>
+          {/* Data Management Note */}
+          <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-2.5 text-xs text-stone-600">
+              <Info className="w-4 h-4 text-stone-400 shrink-0 mt-0.5" />
               <div>
-                <h4 className="text-xs font-bold text-stone-900">
-                  PostgreSQL Row-Level Security (RLS)
-                </h4>
-                <p className="text-[11px] text-stone-500">
-                  Tenant isolation enforced on profiles, projects, feedback, and ai_reports tables.
+                <p className="font-semibold text-stone-800">Reset Demo Data</p>
+                <p className="text-[11px] text-stone-500 mt-0.5">
+                  Restore default sample projects, feedback items, and initial workspace metrics.
                 </p>
               </div>
             </div>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Active</span>
-            </span>
+            <Button variant="outline" size="sm" onClick={handleResetData}>
+              <RotateCcw className="w-3.5 h-3.5 mr-1 text-stone-500" />
+              <span>Reset to Demo Data</span>
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -262,13 +289,13 @@ export function SettingsView({
         <CardHeader className="pb-3">
           <CardTitle className="text-base text-stone-900">Sign Out</CardTitle>
           <CardDescription>
-            End your current browser session on this device.
+            End your current demo session in this browser.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-2">
           <Button variant="danger" size="sm" onClick={handleLogout}>
             <LogOut className="w-3.5 h-3.5 mr-1.5" />
-            <span>Sign Out of Design Feedback Hub</span>
+            <span>Sign Out of Demo Workspace</span>
           </Button>
         </CardContent>
       </Card>

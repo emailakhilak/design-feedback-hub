@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { PriorityBadge } from '@/components/ui/badge';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import { updateFeedbackStatus, getFeedbackItems, getProjects } from '@/lib/storage';
 import {
   KanbanSquare,
   Plus,
@@ -26,21 +26,41 @@ import {
 } from 'lucide-react';
 
 export interface FeedbackBoardProps {
-  initialFeedback: FeedbackItem[];
-  projects: Project[];
+  initialFeedback?: FeedbackItem[];
+  projects?: Project[];
   selectedProjectId?: string;
 }
 
 export function FeedbackBoard({
   initialFeedback,
-  projects,
+  projects: propProjects,
   selectedProjectId: initialProjId,
 }: FeedbackBoardProps) {
-  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>(initialFeedback);
+  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>(() => {
+    if (typeof window !== 'undefined') return getFeedbackItems();
+    return initialFeedback || [];
+  });
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window !== 'undefined') return getProjects();
+    return propProjects || [];
+  });
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjId || 'All');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedPriority, setSelectedPriority] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
+
+  React.useEffect(() => {
+    const handleStorageChange = () => {
+      setFeedbackList(getFeedbackItems());
+      setProjects(getProjects());
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dfh_storage_change', handleStorageChange);
+    };
+  }, []);
 
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -114,39 +134,19 @@ export function FeedbackBoard({
   const completionPercentage =
     totalFiltered > 0 ? Math.round((completedItems.length / totalFiltered) * 100) : 0;
 
-  // Handle immediate status change with persistence
-  const handleStatusChange = async (itemId: string, newStatus: FeedbackStatus) => {
+  // Handle immediate status change with persistence in Local Storage
+  const handleStatusChange = (itemId: string, newStatus: FeedbackStatus) => {
     setMutationError(null);
-    const previousItems = [...feedbackList];
-
-    // Optimistic update
-    setFeedbackList((prev) =>
-      prev.map((item) => (item.id === itemId ? { ...item, status: newStatus } : item))
-    );
-
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        throw new Error('You must be logged in to update feedback status.');
+      const updated = updateFeedbackStatus(itemId, newStatus);
+      if (!updated) {
+        throw new Error('Failed to update status in local storage.');
       }
-
-      const { error } = await supabase
-        .from('feedback')
-        .update({ status: newStatus })
-        .eq('id', itemId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        throw error;
-      }
+      setFeedbackList((prev) =>
+        prev.map((item) => (item.id === itemId ? { ...item, status: newStatus } : item))
+      );
     } catch (err: unknown) {
-      // Revert optimistic update
-      setFeedbackList(previousItems);
-      const msg = err instanceof Error ? err.message : 'Failed to update status in database.';
+      const msg = err instanceof Error ? err.message : 'Failed to update status in local storage.';
       setMutationError(msg);
     }
   };

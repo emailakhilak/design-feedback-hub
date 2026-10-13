@@ -5,7 +5,7 @@ import { Project } from '@/types';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { createClient } from '@/lib/supabase/client';
+import { deleteProject } from '@/lib/storage';
 import { AlertTriangle } from 'lucide-react';
 
 export interface DeleteProjectDialogProps {
@@ -26,31 +26,15 @@ export function DeleteProjectDialog({
 
   if (!project) return null;
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     setIsDeleting(true);
     setError(null);
 
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setError('Session expired. Please log in.');
-        setIsDeleting(false);
-        return;
-      }
-
-      // Delete project (cascade handles associated feedback and ai_reports)
-      const { error: deleteError } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', project.id)
-        .eq('user_id', user.id);
-
-      if (deleteError) {
-        setError(deleteError.message);
+      // Delete project and cascade delete feedback items and AI reports in Local Storage
+      const success = deleteProject(project.id);
+      if (!success) {
+        setError('Project could not be found in local storage.');
         setIsDeleting(false);
         return;
       }
@@ -77,7 +61,7 @@ export function DeleteProjectDialog({
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5 text-xs text-rose-900">
           <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
           <div>
-            Permanently delete <strong className="font-semibold">&quot;{project.title}&quot;</strong> and all associated reviewer feedback items and AI analysis reports.
+            Permanently delete <strong className="font-semibold">&quot;{project.title}&quot;</strong> and all associated reviewer feedback items and AI analysis reports from browser storage.
           </div>
         </div>
 

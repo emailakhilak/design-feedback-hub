@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { Project } from '@/types';
+import { getProjects } from '@/lib/storage';
 import { ProjectModal } from './project-modal';
 import { DeleteProjectDialog } from './delete-project-dialog';
 import { Card } from '@/components/ui/card';
@@ -21,11 +22,26 @@ import {
 } from 'lucide-react';
 
 export interface ProjectsViewProps {
-  initialProjects: Project[];
+  initialProjects?: Project[];
 }
 
 export function ProjectsView({ initialProjects }: ProjectsViewProps) {
-  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window !== 'undefined') return getProjects();
+    return initialProjects || [];
+  });
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setProjects(getProjects());
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dfh_storage_change', handleStorageChange);
+    };
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');

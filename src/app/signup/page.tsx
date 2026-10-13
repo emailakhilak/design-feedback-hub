@@ -3,11 +3,11 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { signUpDemo } from '@/lib/storage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert } from '@/components/ui/alert';
-import { Layers, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
+import { Layers, ArrowRight, Sparkles, HardDrive, Info } from 'lucide-react';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -16,65 +16,24 @@ export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  const supabaseReady = isSupabaseConfigured();
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setSuccessMessage(null);
 
-    if (!displayName || !email || !password) {
-      setError('Please fill in all required fields.');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long.');
-      return;
-    }
-
-    if (!supabaseReady) {
-      setError(
-        'Supabase is not configured yet. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env.local file.'
-      );
+    if (!displayName || !email) {
+      setError('Please fill in your name and email address.');
       return;
     }
 
     setIsLoading(true);
     try {
-      const supabase = createClient();
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            display_name: displayName,
-          },
-        },
-      });
-
-      if (signUpError) {
-        setError(signUpError.message);
-        setIsLoading(false);
-        return;
-      }
-
-      if (data.session) {
-        // Immediate session granted
-        router.push('/dashboard');
-        router.refresh();
-      } else {
-        // Email confirmation enabled on Supabase
-        setSuccessMessage(
-          'Account created successfully! Please check your email to confirm your account or sign in.'
-        );
-        setIsLoading(false);
-      }
+      // Local demo account creation in browser Local Storage
+      signUpDemo(email, displayName);
+      router.push('/dashboard');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'An unexpected error occurred during signup.';
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred during demo setup.';
       setError(msg);
       setIsLoading(false);
     }
@@ -92,37 +51,37 @@ export default function SignupPage() {
             Design Feedback Hub
           </h1>
           <p className="text-xs text-stone-500 max-w-sm mx-auto">
-            Create your account to start managing portfolio feedback and generating Gemini AI critiques.
+            Create your demo designer profile to start managing portfolio feedback and generating Gemini AI critiques.
           </p>
         </div>
 
-        {/* Configuration banner if needed */}
-        {!supabaseReady && (
-          <Alert variant="warning" title="Supabase Setup Required">
-            To enable real authentication and persistence, copy{' '}
-            <code className="bg-amber-100 px-1 py-0.5 rounded text-[11px]">.env.example</code> to{' '}
-            <code className="bg-amber-100 px-1 py-0.5 rounded text-[11px]">.env.local</code> and provide your Supabase URL & Anon Key.
-          </Alert>
-        )}
-
         {/* Signup Card */}
         <div className="bg-white border border-stone-200/90 rounded-2xl p-7 shadow-xs">
-          <h2 className="text-base font-semibold text-stone-900 mb-1">
-            Create your designer account
-          </h2>
-          <p className="text-xs text-stone-500 mb-6">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-base font-semibold text-stone-900">
+              Create demo designer profile
+            </h2>
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200/60 px-2 py-0.5 rounded-full">
+              Demo Mode
+            </span>
+          </div>
+          <p className="text-xs text-stone-500 mb-5">
             Get started with your portfolio workspace in seconds.
           </p>
+
+          <div className="mb-5 p-3 rounded-lg bg-stone-50 border border-stone-200/70 text-[11px] text-stone-600 flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-stone-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-stone-700">Client-Side Demo Profile</p>
+              <p className="text-stone-500 mt-0.5">
+                Profiles and projects are saved directly into your browser&apos;s Local Storage. No cloud database registration required.
+              </p>
+            </div>
+          </div>
 
           {error && (
             <div className="mb-5">
               <Alert variant="error">{error}</Alert>
-            </div>
-          )}
-
-          {successMessage && (
-            <div className="mb-5">
-              <Alert variant="success">{successMessage}</Alert>
             </div>
           )}
 
@@ -147,13 +106,12 @@ export default function SignupPage() {
             />
 
             <Input
-              label="Password (min 6 characters)"
+              label="Demo Password (optional)"
               type="password"
-              required
-              autoComplete="new-password"
               placeholder="••••••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              helperText="Demo mode only: passwords are never stored or transmitted."
             />
 
             <Button
@@ -162,7 +120,7 @@ export default function SignupPage() {
               isLoading={isLoading}
               disabled={isLoading}
             >
-              <span>Create Account</span>
+              <span>Create Demo Account</span>
               <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
           </form>
@@ -180,11 +138,11 @@ export default function SignupPage() {
           </div>
         </div>
 
-        {/* Security badge */}
+        {/* Persistence & AI status note */}
         <div className="flex items-center justify-center gap-6 text-[11px] text-stone-400">
           <span className="flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-stone-400" />
-            PostgreSQL Row-Level Security
+            <HardDrive className="w-3.5 h-3.5 text-stone-400" />
+            Browser Local Storage
           </span>
           <span className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />

@@ -3,77 +3,79 @@
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { signInDemo, DEFAULT_DEMO_USER } from '@/lib/storage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert } from '@/components/ui/alert';
-import { Layers, ArrowRight, Sparkles, ShieldCheck } from 'lucide-react';
+import { Layers, ArrowRight, Sparkles, HardDrive, Info } from 'lucide-react';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirectTo') || '/dashboard';
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(DEFAULT_DEMO_USER.email);
+  const [password, setPassword] = useState('demo-password');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  const supabaseReady = isSupabaseConfigured();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!email || !password) {
-      setError('Please provide both email and password.');
-      return;
-    }
-
-    if (!supabaseReady) {
-      setError(
-        'Supabase is not configured yet. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env.local file.'
-      );
+    if (!email) {
+      setError('Please provide an email address.');
       return;
     }
 
     setIsLoading(true);
     try {
-      const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (signInError) {
-        setError(signInError.message);
-        setIsLoading(false);
-        return;
-      }
-
+      // Local Demo authentication: sets session in browser Local Storage
+      // Passwords are not stored or transmitted.
+      signInDemo(email, email.split('@')[0]);
       router.push(redirectTo);
-      router.refresh();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'An unexpected error occurred during login.';
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred during demo sign in.';
       setError(msg);
       setIsLoading(false);
     }
   };
 
+  const handleQuickDemoAccess = () => {
+    setIsLoading(true);
+    signInDemo(DEFAULT_DEMO_USER.email, DEFAULT_DEMO_USER.display_name);
+    router.push(redirectTo);
+  };
+
   return (
     <div className="bg-white border border-stone-200/90 rounded-2xl p-7 shadow-xs">
-      <h2 className="text-base font-semibold text-stone-900 mb-1">
-        Sign in to your account
-      </h2>
-      <p className="text-xs text-stone-500 mb-6">
-        Enter your credentials to access your feedback boards.
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-stone-900">
+          Sign in to your account
+        </h2>
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200/60 px-2 py-0.5 rounded-full">
+          Demo Mode
+        </span>
+      </div>
+      <p className="text-xs text-stone-500 mb-5">
+        Enter your credentials or click 1-Click Demo to explore the workspace.
       </p>
 
       {error && (
-        <div className="mb-5">
+        <div className="mb-4">
           <Alert variant="error">{error}</Alert>
         </div>
       )}
+
+      <div className="mb-5 p-3 rounded-lg bg-stone-50 border border-stone-200/70 text-[11px] text-stone-600 flex items-start gap-2.5">
+        <Info className="w-4 h-4 text-stone-400 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-medium text-stone-700">Client-Side Demo Authentication</p>
+          <p className="text-stone-500 mt-0.5">
+            This application uses browser Local Storage for persistence. Passwords are not saved or sent across the network.
+          </p>
+        </div>
+      </div>
 
       <form onSubmit={handleLogin} className="space-y-4">
         <Input
@@ -87,13 +89,13 @@ function LoginForm() {
         />
 
         <Input
-          label="Password"
+          label="Demo Password"
           type="password"
-          required
           autoComplete="current-password"
           placeholder="••••••••••••"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          helperText="Any password accepted in demo mode (not stored)."
         />
 
         <Button
@@ -102,19 +104,39 @@ function LoginForm() {
           isLoading={isLoading}
           disabled={isLoading}
         >
-          <span>Sign In</span>
+          <span>Sign In (Demo Mode)</span>
           <ArrowRight className="w-4 h-4 ml-1" />
         </Button>
       </form>
 
+      <div className="relative my-5">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-stone-200" />
+        </div>
+        <div className="relative flex justify-center text-[11px] uppercase tracking-wider">
+          <span className="bg-white px-2 text-stone-400">or explore instantly</span>
+        </div>
+      </div>
+
+      <Button
+        type="button"
+        variant="secondary"
+        className="w-full"
+        onClick={handleQuickDemoAccess}
+        disabled={isLoading}
+      >
+        <Sparkles className="w-4 h-4 mr-1.5 text-indigo-500" />
+        <span>Continue as Alex Rivera (1-Click Demo)</span>
+      </Button>
+
       <div className="mt-6 pt-5 border-t border-stone-100 text-center">
         <p className="text-xs text-stone-500">
-          Don&apos;t have an account?{' '}
+          New designer?{' '}
           <Link
             href="/signup"
             className="font-semibold text-indigo-600 hover:text-indigo-700 hover:underline"
           >
-            Create an account
+            Create demo profile
           </Link>
         </p>
       </div>
@@ -123,8 +145,6 @@ function LoginForm() {
 }
 
 export default function LoginPage() {
-  const supabaseReady = isSupabaseConfigured();
-
   return (
     <div className="min-h-screen bg-[#FBFBFA] flex flex-col justify-center items-center px-4 py-12 sm:px-6 lg:px-8">
       <div className="w-full max-w-md space-y-8">
@@ -141,30 +161,21 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Configuration banner if needed */}
-        {!supabaseReady && (
-          <Alert variant="warning" title="Supabase Setup Required">
-            To enable real authentication and persistence, copy{' '}
-            <code className="bg-amber-100 px-1 py-0.5 rounded text-[11px]">.env.example</code> to{' '}
-            <code className="bg-amber-100 px-1 py-0.5 rounded text-[11px]">.env.local</code> and provide your Supabase URL & Anon Key.
-          </Alert>
-        )}
-
         <Suspense
           fallback={
             <div className="bg-white border border-stone-200 rounded-2xl p-7 text-center text-xs text-stone-400 animate-pulse">
-              Loading login form...
+              Loading demo form...
             </div>
           }
         >
           <LoginForm />
         </Suspense>
 
-        {/* Security & Workshop note */}
+        {/* Persistence & AI status note */}
         <div className="flex items-center justify-center gap-6 text-[11px] text-stone-400">
           <span className="flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-stone-400" />
-            Supabase RLS Protected
+            <HardDrive className="w-3.5 h-3.5 text-stone-400" />
+            Browser Local Storage
           </span>
           <span className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />

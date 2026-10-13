@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Project, FeedbackItem, DashboardStats } from '@/types';
 import { calculateDashboardStats, formatDate } from '@/lib/utils';
+import { getProjects, getFeedbackItems, getProfile } from '@/lib/storage';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PriorityBadge, StatusBadge } from '@/components/ui/badge';
@@ -19,27 +20,55 @@ import {
   ExternalLink,
   Clock,
   TrendingUp,
+  HardDrive,
 } from 'lucide-react';
 
 export interface DashboardViewProps {
-  initialProjects: Project[];
-  initialFeedback: FeedbackItem[];
-  userEmail: string;
-  displayName: string;
-  supabaseConfigured: boolean;
-  geminiConfigured: boolean;
+  initialProjects?: Project[];
+  initialFeedback?: FeedbackItem[];
+  userEmail?: string;
+  displayName?: string;
+  geminiConfigured?: boolean;
 }
 
 export function DashboardView({
   initialProjects,
   initialFeedback,
-  userEmail,
-  displayName,
-  supabaseConfigured,
-  geminiConfigured,
+  displayName: propName,
+  geminiConfigured = true,
 }: DashboardViewProps) {
-  const [projects] = useState<Project[]>(initialProjects);
-  const [feedbackList] = useState<FeedbackItem[]>(initialFeedback);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window !== 'undefined') return getProjects();
+    return initialProjects || [];
+  });
+  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>(() => {
+    if (typeof window !== 'undefined') return getFeedbackItems();
+    return initialFeedback || [];
+  });
+  const [displayName, setDisplayName] = useState(() => {
+    if (propName) return propName;
+    if (typeof window !== 'undefined') {
+      const p = getProfile();
+      return p.display_name || 'Alex Rivera';
+    }
+    return 'Alex Rivera';
+  });
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setProjects(getProjects());
+      setFeedbackList(getFeedbackItems());
+      const p = getProfile();
+      if (p.display_name) setDisplayName(p.display_name);
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dfh_storage_change', handleStorageChange);
+    };
+  }, []);
 
   const stats: DashboardStats = calculateDashboardStats(projects, feedbackList);
 
@@ -56,15 +85,7 @@ export function DashboardView({
 
   return (
     <div className="space-y-8 pb-12">
-      {/* Configuration Status Banners */}
-      {!supabaseConfigured && (
-        <Alert variant="warning" title="Supabase Database Not Connected">
-          To save real projects and feedback to your PostgreSQL database, copy{' '}
-          <code className="bg-amber-100 font-mono px-1 py-0.5 rounded text-[11px]">.env.example</code> to{' '}
-          <code className="bg-amber-100 font-mono px-1 py-0.5 rounded text-[11px]">.env.local</code> and provide your Supabase project credentials.
-        </Alert>
-      )}
-
+      {/* Local Storage & AI Status Banners */}
       {!geminiConfigured && (
         <Alert variant="info" title="Google Gemini AI Integration Ready">
           To enable real AI feedback synthesis and smart task generation, add your{' '}
@@ -77,11 +98,12 @@ export function DashboardView({
       <div className="bg-white border border-stone-200/90 rounded-2xl p-6 sm:p-8 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="space-y-1.5 max-w-2xl">
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-stone-100 text-stone-700 text-[11px] font-medium border border-stone-200">
-            <span>Workspace Active</span>
+            <HardDrive className="w-3.5 h-3.5 text-stone-500" />
+            <span>Local Storage Active</span>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           </div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900">
-            Welcome back, {displayName || userEmail.split('@')[0]}
+            Welcome back, {displayName || 'Portfolio Designer'}
           </h2>
           <p className="text-xs sm:text-sm text-stone-500 leading-relaxed">
             Manage your design iterations, review mentor suggestions, and run Google Gemini feedback analysis to refine your showcase pieces.

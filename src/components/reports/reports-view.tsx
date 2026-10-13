@@ -18,18 +18,45 @@ import {
   FileSpreadsheet,
   Sparkles,
 } from 'lucide-react';
+import { getProjects, getFeedbackItems, getAiReports } from '@/lib/storage';
 
 export interface ReportsViewProps {
-  projects: Project[];
-  feedbackList: FeedbackItem[];
-  recentReports: AiReportRecord[];
+  projects?: Project[];
+  feedbackList?: FeedbackItem[];
+  recentReports?: AiReportRecord[];
 }
 
 export function ReportsView({
-  projects,
-  feedbackList,
-  recentReports,
+  projects: propProjects,
+  feedbackList: propFeedback,
+  recentReports: propReports,
 }: ReportsViewProps) {
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window !== 'undefined') return getProjects();
+    return propProjects || [];
+  });
+  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>(() => {
+    if (typeof window !== 'undefined') return getFeedbackItems();
+    return propFeedback || [];
+  });
+  const [recentReports, setRecentReports] = useState<AiReportRecord[]>(() => {
+    if (typeof window !== 'undefined') return getAiReports();
+    return propReports || [];
+  });
+
+  React.useEffect(() => {
+    const handleStorageChange = () => {
+      setProjects(getProjects());
+      setFeedbackList(getFeedbackItems());
+      setRecentReports(getAiReports());
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('dfh_storage_change', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dfh_storage_change', handleStorageChange);
+    };
+  }, []);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [selectedPriority, setSelectedPriority] = useState<string>('All');
